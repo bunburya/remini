@@ -1,0 +1,15 @@
+[Unit]
+Description=Remini
+
+[Service]
+User=user_to_run_as
+Type=simple
+ExecStart=/path/to/remini.py
+Environment="REMINI_BASE_URL=gemini://remini/base/url/"
+Environment="REMINI_PRAW_FILE=/path/to/praw/file"
+Environment="REMINI_SCGI_SOCK=/path/to/sock/file.sock"
+Environment="REMINI_LOG_FILE=/path/to/log/file.log"
+Environment="REMINI_LANDING_PAGE=/path/to/landing/page.gmi"
+
+[Install]
+WantedBy=default.target
