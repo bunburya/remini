@@ -7,8 +7,9 @@ name = "pypi"
 praw = "*"
 scgi = "*"
 md2gemini = "*"
+ignition-gemini = "*"
+pytest = "*"
 
 [dev-packages]
 
 [requires]
-python_version = "3.6"

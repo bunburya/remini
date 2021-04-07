@@ -44,10 +44,17 @@ GENERIC_ERR_MSG = ('Got unexpected error. This could include the page not being 
 with open(PRAW_FILE) as f:
     CLIENT_ID, CLIENT_SECRET, USER_AGENT = (line.strip() for line in f.readlines())
 
+# The different bases for Reddit URLs
 REDDIT_DOMAINS = [
     ['redd', 'it'],
     ['reddit', 'com']
 ]
+
+# Top level Reddit "commands" that we support
+REDDIT_CMDS = {
+    'r',
+    'u'
+}
 
 reddit = praw.Reddit(
     user_agent=USER_AGENT,
@@ -166,8 +173,8 @@ def parse_reddit_url(url: str) -> str:
                 break
         else:
             reddit_url = False
-    if reddit_url:
-        logging.debug('URL is Reddit URL; converting.')
+    if reddit_url and handle_request(parsed.path, parsed.query, True):
+        logging.debug('URL is supported Reddit URL; converting.')
         new_url = BASE_URL + parsed.path.lstrip('/')
         logging.debug(f'New URL is "{new_url}".')
         return new_url
@@ -500,7 +507,7 @@ def display_redditor(name: str) -> List[str]:
 
 # Tying it all together
 
-def handle_r(tokens: List[str], path: str, query: str):
+def handle_r(tokens: List[str], path: str, query: str, check_only: bool = False) -> Union[bytes, bool]:
     """Process a request where the path begins with "/r/".
     
     :param tokens: A list of strings, each representing a fragment of \
@@ -508,30 +515,47 @@ def handle_r(tokens: List[str], path: str, query: str):
     :param path: The full request path. Helpful for logging.
     :param query: The query string (ie, the bit of the URL following \
             a "?", if any).
+    :param check_only: If True, rather than returning data to send to \
+            the client, simply return True or False based on whether \
+            the path is supported. Use to check whether we need to \
+            convert Reddit URLs.
+
+    :return: A bytes object containing the response to be sent to the \
+            client, or, if ``check_only`` is True, a bool representing \
+            whether the path is supported.
     
     """
     
     if (len(tokens) >= 5) and (tokens[1] == 'comments'):
         # Request is for a specific comment
         comment_id = tokens[4]
+        if check_only:
+            return True
         logging.debug(f'Displaying comment with ID "{comment_id}".')
         return ok(display_comment(comment_id))
     elif (len(tokens) >= 3) and (tokens[1] == 'comments'):
         # Request is for all comments for a submission
         submission_id = tokens[2]
+        if check_only:
+            return True
         logging.debug(f'Displaying submission with ID "{submission_id}".')
         return ok(display_submission(submission_id))
     elif len(tokens) == 1:
         # Request is to display subreddit
         name = tokens[0]
+        if check_only:
+            return True
         logging.debug(f'Displaying subreddit with name "{name}".')
         return ok(display_subreddit(name))
     elif tokens:
         # Got some unexpected form of URL. Log an error and return a bad request response
+        if check_only:
+            return False
         logging.error(f'Got unexpected set of tokens: {tokens}.')
-        #return ok(display_subreddit(tokens[0]))
         return bad_request(f'Request invalid or not supported: {path}')
     else:
+        if check_only:
+            return True
         if query:
             redirect_to = f'{BASE_URL}r/{query}'
             logging.debug(f'No path, but query found - redirecting to "{redirect_to}".')
@@ -540,7 +564,7 @@ def handle_r(tokens: List[str], path: str, query: str):
             logging.debug('No path or query found - prompting for subreddit name.')
             return get_input('Enter subreddit name:')
 
-def handle_u(tokens: List[str], path: str, query: str):
+def handle_u(tokens: List[str], path: str, query: str, check_only: bool = False) -> Union[bytes, bool]:
     """Process a request where the path begins with "/u/".
 
     :param tokens: A list of strings, each representing a fragment of \
@@ -548,14 +572,32 @@ def handle_u(tokens: List[str], path: str, query: str):
     :param path: The full request path. Helpful for logging.
     :param query: The query string (ie, the bit of the URL following \
             a "?", if any).
+    :param check_only: If True, rather than returning data to send to \
+            the client, simply return True or False based on whether \
+            the path is supported. Use to check whether we need to \
+            convert Reddit URLs.
+
+    :return: A bytes object containing the response to be sent to the \
+            client, or, if ``check_only`` is True, a bool representing \
+            whether the path is supported.
 
     """
 
     if tokens:
-        name = tokens[0]
-        logging.debug(f'Displaying user profile for {name}.')
-        return ok(display_redditor(name))
+        if len(tokens) == 1:
+            if check_only:
+                return True
+            name = tokens[0]
+            logging.debug(f'Displaying user profile for {name}.')
+            return ok(display_redditor(name))
+        else:
+            if check_only:
+                return False
+            logging.warning(f'Got unsupported path "{path}".')
+            return bad_request(f'Request invalid or not supported: {path}')
     else:
+        if check_only:
+            return True
         if query:
             redirect_to = f'{BASE_URL}u/{query}'
             logging.debug(f'No path, but query found - redirecting to "{redirect_to}".')
@@ -564,29 +606,38 @@ def handle_u(tokens: List[str], path: str, query: str):
             logging.debug('No path or query found - prompting for Redditor name.')
             return get_input('Enter Redditor name:')
 
-def handle_request(path: str, query: str = '') -> bytes:
+def handle_request(path: str, query: str = '', check_only: bool = False) -> Union[bytes, bool]:
     """Handle a single request.
     
     :param path: The request path (ie, the bit of the URL following \
             the script endpoint and before a "?").
     :param query: The query string (ie, the bit of the URL following \
             a "?", if any).
+    :param check_only: If True, rather than returning data to send to \
+            the client, simply return True or False based on whether \
+            the path is supported. Use to check whether we need to \
+            convert Reddit URLs.
 
     :return: A bytes object containing the response to be sent to the \
-            client.
+            client, or, if ``check_only`` is True, a bool representing \
+            whether the path is supported.
 
     """
-    path = path.strip()
-    if (not path) or (path == '/'):
+    path = path.strip().strip('/')
+    if not path:
         # No additional path has been included.
-        # TODO: Display a landing page here.
         logging.debug('Empty path received.')
+        if check_only:
+            return True
         if LANDING_PAGE:
             with open(LANDING_PAGE) as f:
                 return ok(f.readlines(), join_on_newline=False)
         else:
             return ok(['Remini is working, but no landing page has been set.'])
-    logging.debug(f'Resolving path "{path}".')
+    if check_only:
+        logging.debug(f'Checking support for path "{path}".')
+    else:
+        logging.debug(f'Resolving path "{path}".')
     tokens = unquote(path).split('/')
     if not tokens[0]:
         # If the path we receive starts with a "/", the first item of this list
@@ -595,16 +646,20 @@ def handle_request(path: str, query: str = '') -> bytes:
     if not tokens[-1]:
         # Last token is empty string, meaning path ended with /
         tokens.pop()
-    logging.debug(f'Tokens: {tokens}')
+    #logging.debug(f'Tokens: {tokens}')
     cmd = tokens[0]
     logging.info(f'Got command "{cmd}".')
     if cmd == 'r':
-        return handle_r(tokens[1:], path, query)
+        return handle_r(tokens[1:], path, query, check_only)
     elif cmd == 'u':
-        return handle_u(tokens[1:], path, query)
+        return handle_u(tokens[1:], path, query, check_only)
     else:
-        logging.error(f'Unknown command "{cmd}".')
-        return bad_request(f'Couldn\'t parse path "{path}".')
+        if check_only:
+            logging.debug(f'Path not supported: Unknown comment "{cmd}".')
+            return False
+        else:
+            logging.error(f'Unknown command "{cmd}".')
+            return bad_request(f'Couldn\'t parse path "{path}".')
 
 
 def from_cmd_line():
